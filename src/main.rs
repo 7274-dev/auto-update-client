@@ -4,7 +4,6 @@ extern crate chrono;
 extern crate colored;
 
 use std::process::{Command, exit};
-use std::num;
 
 use chrono::NaiveDateTime;
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
@@ -179,7 +178,7 @@ async fn deployment(matches: &ArgMatches<'_>) {
 
 }
 
-async fn logs(matches: &ArgMatches<'_>) {
+async fn logs(_matches: &ArgMatches<'_>) {
 
 }
 
