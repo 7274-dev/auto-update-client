@@ -7,7 +7,7 @@ edition = "2018"
 
 [dependencies]
 clap = "2.33.3"
-reqwest = "0.11.4"
+reqwest = { version = "0.11.4", features = ["json"] }
 tokio = { version = "1.8.1", features = ["full"] }
 git2 = "0.13.20"
 tempdir = "0.3.7"

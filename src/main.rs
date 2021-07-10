@@ -3,7 +3,7 @@ extern crate clap;
 extern crate chrono;
 extern crate colored;
 
-use std::process::{Command, exit};
+use std::{collections::HashMap, process::{Command, exit}};
 
 use chrono::NaiveDateTime;
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
@@ -176,6 +176,59 @@ async fn deployment(matches: &ArgMatches<'_>) {
 
     println!("Deploying commit {}...", &commit.to_string()[..7]);
 
+    // password and server are required, safe to unwrap
+    let password = matches.value_of("password").unwrap();
+    let server = matches.value_of("server").unwrap();
+
+    let client = reqwest::Client::new();
+    if matches.value_of("action").unwrap() == "start" {
+        let mut request_url = String::new();
+        request_url += "http://";
+        request_url += server;
+        request_url += "/deploy/";
+        request_url += &commit.to_string();
+
+
+        let response = client.post(request_url)
+                                        .query(&[("password", password)])
+                                        .send().await;
+
+        match response {
+            Ok(r) => {
+                let response_map: HashMap<String, String> = r.json().await
+                                                        .unwrap_or_else(|e| {
+                                                            println!("Error while deserializing response: {}", e);
+                                                            exit(1);
+                                                        });
+                let response: &str = &response_map.get("response").unwrap().to_owned();
+
+                match response {
+                    "Incorrect Password!" => {
+                        println!("Incorrect password!");
+                        exit(1);
+                    },
+                    "Bad commit id" => {
+                        println!("Fatal error! (this shouldn't happen)");
+                        exit(1);
+                    }
+                    "Error!" => {
+                        println!("Build failed, or there was another error during deployment!");
+                        exit(1);
+                    }
+                    "Successfully deployed commit!" => {
+                        println!("Deployment succeeded!");
+                        exit(0);
+                    }
+                    _ => ()
+                };
+                
+            },
+            Err(e) => {
+                println!("Error while making a request: {}", e);
+                exit(1);
+            } 
+        }
+    }
 }
 
 async fn logs(_matches: &ArgMatches<'_>) {
@@ -207,8 +260,12 @@ async fn main() {
                                                 .value_name("URL")
                                                 .help("The URL of the server you want to interact with")
                                                 .takes_value(true)
-                                                .required(true)))
-                        
+                                                .required(true))
+                                            .arg(Arg::with_name("password")
+                                                    .short("p")
+                                                    .long("password")
+                                                    .takes_value(true)
+                                                    .required(true)))                        
                         .subcommand(SubCommand::with_name("logs")
                                             .about("get logs")
                                             .arg(Arg::with_name("server")
@@ -216,6 +273,11 @@ async fn main() {
                                                 .long("server")
                                                 .value_name("URL")
                                                 .help("The URL of the server you want to interact with")
+                                                .takes_value(true)
+                                                .required(true))
+                                            .arg(Arg::with_name("password")
+                                                .short("p")
+                                                .long("password")
                                                 .takes_value(true)
                                                 .required(true)))
                         .get_matches();
