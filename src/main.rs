@@ -3,7 +3,7 @@ extern crate clap;
 extern crate chrono;
 extern crate colored;
 
-use std::{collections::HashMap, process::{Command, exit}};
+use std::{process::{Command, exit}};
 
 use chrono::NaiveDateTime;
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
@@ -12,8 +12,15 @@ use git2::{Commit, Oid, Repository, Sort};
 use tempdir::TempDir;
 use colored::*;
 use terminal_size::{Height, terminal_size};
+use serde::{Serialize, Deserialize};
 
 const REPO_URL: &str = "https://github.com/7274-dev/AdventnaVyzva-GlobalBackend";
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Response {
+    response: String,
+    status_code: u16
+}
 
 async fn choose_commit() -> Oid {
     let tmp_dir = TempDir::new("repo").unwrap_or_else(|e| panic!("Failed to create temp dir: {}", e));
@@ -151,43 +158,43 @@ async fn choose_commit() -> Oid {
 }
 
 async fn deployment(matches: &ArgMatches<'_>) {
-    // safe to unwrap, has a default value
-    let commit_hash = matches.value_of("commit").unwrap_or("none");
-
-    let commit: Oid;
-    if commit_hash == "none" {
-        commit = choose_commit().await;
-    }
-    else {
-        let tmp_dir = TempDir::new("repo").unwrap_or_else(|e| panic!("Failed to create temp dir: {}", e));
-        let repo = match Repository::clone(REPO_URL, tmp_dir.path()) {
-            Ok(repo) => repo,
-            Err(e) => panic!("Failed while cloning repo: {}", e)
-        };
-
-        match repo.find_commit(Oid::from_str(commit_hash).unwrap()) {
-            Ok(o) => { commit = o.id() },
-            Err(_) => {
-                println!("{} is not a correct commit hash", commit_hash);
-                exit(1);
-            }
-        };
-    }
-
-    println!("Deploying commit {}...", &commit.to_string()[..7]);
-
     // password and server are required, safe to unwrap
     let password = matches.value_of("password").unwrap();
     let server = matches.value_of("server").unwrap();
 
     let client = reqwest::Client::new();
     if matches.value_of("action").unwrap() == "start" {
+        let commit_hash = matches.value_of("commit").unwrap_or("none");
+
+        let commit: Oid;
+        if commit_hash == "none" {
+            commit = choose_commit().await;
+        }
+        else {
+            let tmp_dir = TempDir::new("repo").unwrap_or_else(|e| panic!("Failed to create temp dir: {}", e));
+            let repo = match Repository::clone(REPO_URL, tmp_dir.path()) {
+                Ok(repo) => repo,
+                Err(e) => panic!("Failed while cloning repo: {}", e)
+            };
+
+            match repo.find_commit(Oid::from_str(commit_hash).unwrap()) {
+                Ok(o) => { commit = o.id() },
+                Err(_) => {
+                    println!("{} is not a correct commit hash", commit_hash);
+                    exit(1);
+                }
+            };
+        }
+
+        println!("Deploying commit {}...", &commit.to_string()[..7]);
+
         let mut request_url = String::new();
         request_url += "http://";
         request_url += server;
         request_url += "/deploy/";
         request_url += &commit.to_string();
 
+        println!("Sending request... (if everything is correct, the project is building right now)");
 
         let response = client.post(request_url)
                                         .query(&[("password", password)])
@@ -195,12 +202,12 @@ async fn deployment(matches: &ArgMatches<'_>) {
 
         match response {
             Ok(r) => {
-                let response_map: HashMap<String, String> = r.json().await
+                let response_struct: Response = r.json().await
                                                         .unwrap_or_else(|e| {
                                                             println!("Error while deserializing response: {}", e);
                                                             exit(1);
                                                         });
-                let response: &str = &response_map.get("response").unwrap().to_owned();
+                let response: &str = &response_struct.response.to_owned();
 
                 match response {
                     "Incorrect Password!" => {
@@ -208,18 +215,21 @@ async fn deployment(matches: &ArgMatches<'_>) {
                         exit(1);
                     },
                     "Bad commit id" => {
-                        println!("Fatal error! (this shouldn't happen)");
+                        println!("Fatal error 1! (this should never happen)");
                         exit(1);
                     }
                     "Error!" => {
-                        println!("Build failed, or there was another error during deployment!");
+                        println!("Build failed, this commit (or an earlier one) is deployed or there was another error during deployment!");
                         exit(1);
                     }
                     "Successfully deployed commit!" => {
                         println!("Deployment succeeded!");
                         exit(0);
                     }
-                    _ => ()
+                    _ => {
+                        println!("Fatal error 2! (this should never happen)");
+                        exit(1);
+                    }
                 };
                 
             },
@@ -229,10 +239,98 @@ async fn deployment(matches: &ArgMatches<'_>) {
             } 
         }
     }
+    else {
+        println!("Stopping current deployment...");
+
+        let mut request_url = String::new();
+        request_url += "http://";
+        request_url += server;
+        request_url += "/stop";
+
+        let response = client.post(request_url)
+                .query(&[("password", password)])
+                .send().await;
+        
+        match response {
+            Ok(r) => {
+                let response_struct: Response = r.json().await.unwrap_or_else(|e| {
+                    println!("Error while deserializing response: {}", e);
+                    exit(1);
+                });
+
+                let response: &str = &response_struct.response.to_owned();
+                match response {
+                    "Incorrect Password!" => {
+                        println!("Incorrect password!");
+                        exit(1);
+                    },
+                    "Stopped current deployment!" => {
+                        println!("Successfully stopped current deployment!");
+                        exit(0);
+                    },
+                    "Failed to stop current deployment!" => {
+                        println!("There was an error while stopping your deployment!");
+                        exit(1);
+                    }
+                    "Nothing currently deployed!" => {
+                        println!("There is nothing currently deployed!");
+                        exit(0);
+                    },
+                    _ => ()
+                }
+
+            }
+            Err(e) => {
+                println!("Error while making a request: {}", e);
+                exit(1);
+            }
+        }
+
+    }
 }
 
-async fn logs(_matches: &ArgMatches<'_>) {
+async fn logs(matches: &ArgMatches<'_>) {
+    // password and server are required, safe to unwrap
+    let password = matches.value_of("password").unwrap();
+    let server = matches.value_of("server").unwrap();
 
+    let mut request_url = String::new();
+    request_url += "http://";
+    request_url += server;
+    request_url += "/logs";
+    
+    let client = reqwest::Client::new();
+    let response = client.get(request_url)
+            .query(&[("password", password)])
+            .send().await;
+
+    match response {
+        Ok(r) => {
+            let response_struct: Response = r.json().await.unwrap_or_else(|e| {
+                println!("Error while deserializing response: {}", e);
+                exit(1);
+            });
+
+            let response: &str = &response_struct.response.to_owned();
+            match response {
+                "Incorrect password!" => {
+                    println!("Incorrect password!");
+                    exit(1);
+                }
+                "Nothing currently deployed!" => {
+                    println!("There is nothing currently deployed!");
+                    exit(0);
+                },
+                _ => {
+                    println!("{}", response);
+                }
+            }
+        },
+        Err(e) => {
+            println!("Error while making a request: {}", e);
+            exit(1);
+        }
+    }
 }
 
 #[tokio::main]
