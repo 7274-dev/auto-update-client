@@ -9,7 +9,7 @@ edition = "2018"
 clap = "2.33.3"
 reqwest = { version = "0.11.4", features = ["json"] }
 tokio = { version = "1.8.1", features = ["full"] }
-git2 = "0.13.20"
+git2 = "0.16.1"
 tempdir = "0.3.7"
 chrono = "0.4.19"
 gh-emoji = "1.0.3"
